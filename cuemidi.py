@@ -4,6 +4,77 @@ import pyaudio
 import fluidsynth
 import midi
 import sys
+import threading
+
+import wx
+
+EVT_RESULT_ID = wx.NewId()
+
+class ResultEvent(wx.PyEvent):
+    def __init__(self, data):
+        wx.PyEvent.__init__(self)
+        self.SetEventType(EVT_RESULT_ID)
+        self.data = data
+
+class Worker(threading.Thread):
+    '''Worker thread class'''
+    def __init__(self, notify_window):
+        '''Create worker thread'''
+        threading.Thread.__init__(self)
+        self._notify_window = notify_window
+        self._abort = 0
+        self.start()
+
+    def run(self):
+        '''Run worker thread'''
+
+class CueApp(wx.Frame):
+
+    def __init__(self, *args, **kwargs):
+        super(CueApp, self).__init__(*args, **kwargs)
+        self.InitUI()
+
+    def InitUI(self):
+        menubar = wx.MenuBar()
+
+        fileMenu = wx.Menu()
+        fileMenu.Append(wx.ID_OPEN, '&Open')
+        #~ fileMenu.Append(wx.ID_ANY, '&Set SoundFont')
+        quitItem = fileMenu.Append(wx.ID_EXIT, '&Quit', 'Quit application')
+
+        menubar.Append(fileMenu, '&File')
+        self.SetMenuBar(menubar)
+
+        self.Bind(wx.EVT_MENU, self.OnQuit, quitItem)
+
+        vbox = wx.BoxSizer(wx.VERTICAL)
+
+        curTime = wx.StaticText(self)
+        curTime.SetLabel("Hello")
+
+        toolbar = wx.ToolBar(self)
+        toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/play64.png'))
+        toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/pause64.png'))
+        toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/rr64.png'))
+        toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/ff64.png'))
+        toolbar.Realize()
+        
+        vbox.Add(curTime, 0, wx.TOP)
+        vbox.Add(toolbar, 0, wx.TOP)
+        self.SetSizer(vbox)
+        self.SetSize((400, 400))
+        self.SetTitle('CueMIDI')
+        self.Show(True)
+
+    def OnQuit(self, e):
+        self.Close()
+
+if __name__ == '__main__':
+    app = wx.App()
+    CueApp(None)
+    app.MainLoop()
+
+################
 
 fs = fluidsynth.Synth()
 
@@ -17,8 +88,6 @@ s = []
 
 sfid = fs.sfload("gm32MB.sf2")
 fs.program_select(0, sfid, 0, 68)
-
-tick_length = 500
 
 pattern = midi.read_midifile(sys.argv[1])
 
