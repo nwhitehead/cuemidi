@@ -53,7 +53,6 @@ class Player(threading.Thread):
         self._playing = True
 
     def do_event(self, evt):
-        print(evt)
         if type(evt) == midi.events.TimeSignatureEvent:
             # MIDI stores log_2 of denom
             self.timeSig = [evt.data[0], 2 ** evt.data[1]]
@@ -80,26 +79,43 @@ class Player(threading.Thread):
         ]
         wx.PostEvent(self._notify_window, evt)
 
+    def gotoTime(self, time):
+        self.time = time
+        if self.time < 0:
+            self.time = 0
+        self.remainingEvents = [e for e in self.events if e.tick >= self.time]
+        self.sendUpdate()
+        self.fs.system_reset()
+
+    def skip(self, dtime):
+        self.gotoTime(self.time + dtime * self.metronome)
+
     def main(self):
-        while len(self.remainingEvents) > 0:
-            event = self.remainingEvents.pop(0)
-            delta = event.tick - self.time
-            while delta > 0:
-                bdelta = delta
-                if delta > MAXDELTA:
-                    bdelta = MAXDELTA
-                self.time += bdelta
-                n = int(44100 * bdelta / self.resolution * 60 / self.tempo)
-                s = self.fs.get_samples(n)
-                samps = fluidsynth.raw_audio_string(s)
-                self.strm.write(samps)
-                delta -= bdelta
+        while True:
+            if len(self.remainingEvents) > 0 and self._playing:
+                event = self.remainingEvents.pop(0)
+                delta = event.tick - self.time
+                while delta > 0:
+                    bdelta = delta
+                    if delta > MAXDELTA:
+                        bdelta = MAXDELTA
+                    self.time += bdelta
+                    n = int(44100 * bdelta / self.resolution * 60 / self.tempo)
+                    s = self.fs.get_samples(n)
+                    samps = fluidsynth.raw_audio_string(s)
+                    self.strm.write(samps)
+                    delta -= bdelta
+                    self.sendUpdate()
+                    if not self._playing:
+                        break
+                self.do_event(event)
                 self.sendUpdate()
-            self.do_event(event)
-            self.sendUpdate()
             if self._abort:
                 return
     
+    def pause(self):
+        self._playing = not self._playing
+
     def close(self):
         self.fs.delete()
 
@@ -141,9 +157,14 @@ class CueApp(wx.Frame):
 
         toolbar = wx.ToolBar(self)
         toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/play64.png'))
-        toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/pause64.png'))
-        toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/rr64.png'))
-        toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/ff64.png'))
+        pauseTool = toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/pause64.png'))
+        self.Bind(wx.EVT_TOOL, self.OnPause, pauseTool)
+        rrTool = toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/rr64.png'))
+        self.Bind(wx.EVT_TOOL, self.MetaSkip(-100), rrTool)
+        ffTool = toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/ff64.png'))
+        self.Bind(wx.EVT_TOOL, self.MetaSkip(100), ffTool)
+        markTool = toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/mark64.png'))
+        self.Bind(wx.EVT_TOOL, self.Mark, markTool)
         toolbar.Realize()
 
         vbox.Add(curTime, 0, wx.TOP)
@@ -162,7 +183,18 @@ class CueApp(wx.Frame):
     def OnQuit(self, e):
         '''Quit menu item action'''
         self.Close()
-    
+
+    def OnPause(self, e):
+        self.player.pause()
+
+    def MetaSkip(self, v):
+        def f(_):
+            self.player.skip(v)
+        return f
+
+    def Mark(self, e):
+        return
+
     def Tick(self, e):
         '''Update with info from worker thread'''
         self.curTime.SetLabel('Time: {} {} {}'.format(e.data[0], e.data[1], e.data[2]))
