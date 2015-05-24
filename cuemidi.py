@@ -23,33 +23,36 @@ class Worker(threading.Thread):
         threading.Thread.__init__(self)
         self._notify_window = notify_window
         self._abort = 0
+        self.i = 0
         self.start()
 
     def run(self):
         '''Run worker thread'''
-        for i in range(20):
+        while True:
             time.sleep(1)
-            print(i)
+            self.i += 1
             if self._abort:
                 break
             else:
                 evt = wx.PyEvent()
                 evt.SetEventType(EVT_TICK)
-                evt.data = i
+                evt.data = self.i
                 wx.PostEvent(self._notify_window, evt)
 
     def abort(self):
-        print("Aborting!")
         self._abort = True
 
 class CueApp(wx.Frame):
+    '''Main CueMIDI application class'''
 
     def __init__(self, *args, **kwargs):
+        '''Setup app'''
         super(CueApp, self).__init__(*args, **kwargs)
         self.worker = Worker(self)
         self.InitUI()
 
     def InitUI(self):
+        '''Setup UI for application'''
         menubar = wx.MenuBar()
 
         fileMenu = wx.Menu()
@@ -62,10 +65,13 @@ class CueApp(wx.Frame):
 
         self.Bind(wx.EVT_MENU, self.OnQuit, quitItem)
         self.Bind(wx.EVT_CLOSE, self.OnClose)
+        self.Connect(-1, -1, EVT_TICK, self.Tick)
+
         vbox = wx.BoxSizer(wx.VERTICAL)
 
         curTime = wx.StaticText(self)
         curTime.SetLabel("Hello")
+        self.curTime = curTime
 
         toolbar = wx.ToolBar(self)
         toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/play64.png'))
@@ -82,13 +88,19 @@ class CueApp(wx.Frame):
         self.Show(True)
 
     def OnClose(self, e):
-        print("OnQuit")
+        '''Stop threads and close app'''
         if self.worker:
             self.worker.abort()
         self.Destroy()
 
     def OnQuit(self, e):
+        '''Quit menu item action'''
         self.Close()
+    
+    def Tick(self, e):
+        '''Update with info from worker thread'''
+        print("TICK", e.data)
+        self.curTime.SetLabel('Time: {}'.format(e.data))
 
 if __name__ == '__main__':
     app = wx.App()
