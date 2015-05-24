@@ -8,10 +8,17 @@ import threading
 
 import wx
 
+EVT_TICK = wx.NewId()
+MAXDELTA = 5
+
 class Player(threading.Thread):
     '''Class for playing MIDI files'''
-    def __init__(self):
-        '''Setup player (no file loading)'''
+    def __init__(self, notify_window):
+        '''Setup player thread'''
+        threading.Thread.__init__(self)
+        self._notify_window = notify_window
+        self._abort = False
+        self._playing = False
         self.fs = fluidsynth.Synth()
         self.pa = pyaudio.PyAudio()
         self.strm = self.pa.open(
@@ -21,6 +28,13 @@ class Player(threading.Thread):
             output = True)
         self.sfid = self.fs.sfload("gm32MB.sf2")
         self.time = 0
+        self.timeSig = [4, 4]
+        self.metronome = 32
+        self.qpm = 3 # quarter notes per measure (midi is 1/4 based)
+        self.start()
+
+    def abort(self):
+        self._abort = True
 
     def load(self, filename):
         '''Load MIDI file'''
@@ -36,8 +50,15 @@ class Player(threading.Thread):
         self.remainingEvents = events[:]
         self.tempo = 120.0
         self.time = 0
+        self._playing = True
 
     def do_event(self, evt):
+        print(evt)
+        if type(evt) == midi.events.TimeSignatureEvent:
+            # MIDI stores log_2 of denom
+            self.timeSig = [evt.data[0], 2 ** evt.data[1]]
+            # Metronome is just for displaying subbeats
+            self.metronome = evt.data[2]
         if type(evt) == midi.events.NoteOnEvent:
             self.fs.noteon(evt.channel, evt.data[0], evt.data[1])
         if type(evt) == midi.events.NoteOffEvent:
@@ -49,55 +70,43 @@ class Player(threading.Thread):
         if type(evt) == midi.events.SetTempoEvent:
             self.tempo = evt.get_bpm()
 
-    def tick(self):
-        event = self.remainingEvents.pop(0)
-        delta = event.tick - self.time
-        if delta > 0:
-            self.time = event.tick
-            s = fs.get_samples(int(44100 * delta / self.resolution * 120 / 2 / self.tempo))
-            samps = fluidsynth.raw_audio_string(s)
-            self.strm.write(samps)
-        self.do_event(event)
-    
-    def close(self):
-        fs.delete()
+    def sendUpdate(self):
+        evt = wx.PyEvent()
+        evt.SetEventType(EVT_TICK)
+        evt.data = [
+            1 + self.time / self.resolution / self.qpm,
+            1 + int(self.time * self.timeSig[1] / self.resolution / 4) % self.timeSig[0],
+            self.time / self.metronome,
+        ]
+        wx.PostEvent(self._notify_window, evt)
 
     def main(self):
         while len(self.remainingEvents) > 0:
-            self.tick()
-        self.close()
-
-
-
-EVT_TICK = wx.NewId()
-
-class Worker(threading.Thread):
-    '''Worker thread class'''
-    def __init__(self, notify_window):
-        '''Create worker thread'''
-        threading.Thread.__init__(self)
-        self._notify_window = notify_window
-        self._abort = 0
-        self.i = 0
-        self.start()
+            event = self.remainingEvents.pop(0)
+            delta = event.tick - self.time
+            while delta > 0:
+                bdelta = delta
+                if delta > MAXDELTA:
+                    bdelta = MAXDELTA
+                self.time += bdelta
+                n = int(44100 * bdelta / self.resolution * 60 / self.tempo)
+                s = self.fs.get_samples(n)
+                samps = fluidsynth.raw_audio_string(s)
+                self.strm.write(samps)
+                delta -= bdelta
+                self.sendUpdate()
+            self.do_event(event)
+            self.sendUpdate()
+            if self._abort:
+                return
+    
+    def close(self):
+        self.fs.delete()
 
     def run(self):
-        '''Run worker thread'''
-        self.player = Player()
-        self.player.load('test.midi')
-        while True:
-            time.sleep(1)
-            self.i += 1
-            if self._abort:
-                break
-            else:
-                evt = wx.PyEvent()
-                evt.SetEventType(EVT_TICK)
-                evt.data = self.i
-                wx.PostEvent(self._notify_window, evt)
-
-    def abort(self):
-        self._abort = True
+        self.load('test.midi')
+        self.main()
+        self.close()
 
 class CueApp(wx.Frame):
     '''Main CueMIDI application class'''
@@ -105,7 +114,7 @@ class CueApp(wx.Frame):
     def __init__(self, *args, **kwargs):
         '''Setup app'''
         super(CueApp, self).__init__(*args, **kwargs)
-        self.worker = Worker(self)
+        self.player = Player(self)
         self.InitUI()
 
     def InitUI(self):
@@ -146,8 +155,8 @@ class CueApp(wx.Frame):
 
     def OnClose(self, e):
         '''Stop threads and close app'''
-        if self.worker:
-            self.worker.abort()
+        if self.player:
+            self.player.abort()
         self.Destroy()
 
     def OnQuit(self, e):
@@ -156,8 +165,7 @@ class CueApp(wx.Frame):
     
     def Tick(self, e):
         '''Update with info from worker thread'''
-        print("TICK", e.data)
-        self.curTime.SetLabel('Time: {}'.format(e.data))
+        self.curTime.SetLabel('Time: {} {} {}'.format(e.data[0], e.data[1], e.data[2]))
 
 if __name__ == '__main__':
     app = wx.App()
