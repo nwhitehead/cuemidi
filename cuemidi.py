@@ -8,12 +8,12 @@ import threading
 
 import wx
 
-EVT_RESULT_ID = wx.NewId()
+EVT_TICK = wx.NewId()
 
 class ResultEvent(wx.PyEvent):
     def __init__(self, data):
         wx.PyEvent.__init__(self)
-        self.SetEventType(EVT_RESULT_ID)
+        self.SetEventType(EVT_TICK)
         self.data = data
 
 class Worker(threading.Thread):
@@ -27,11 +27,26 @@ class Worker(threading.Thread):
 
     def run(self):
         '''Run worker thread'''
+        for i in range(20):
+            time.sleep(1)
+            print(i)
+            if self._abort:
+                break
+            else:
+                evt = wx.PyEvent()
+                evt.SetEventType(EVT_TICK)
+                evt.data = i
+                wx.PostEvent(self._notify_window, evt)
+
+    def abort(self):
+        print("Aborting!")
+        self._abort = True
 
 class CueApp(wx.Frame):
 
     def __init__(self, *args, **kwargs):
         super(CueApp, self).__init__(*args, **kwargs)
+        self.worker = Worker(self)
         self.InitUI()
 
     def InitUI(self):
@@ -46,7 +61,7 @@ class CueApp(wx.Frame):
         self.SetMenuBar(menubar)
 
         self.Bind(wx.EVT_MENU, self.OnQuit, quitItem)
-
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
         vbox = wx.BoxSizer(wx.VERTICAL)
 
         curTime = wx.StaticText(self)
@@ -58,13 +73,19 @@ class CueApp(wx.Frame):
         toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/rr64.png'))
         toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/ff64.png'))
         toolbar.Realize()
-        
+
         vbox.Add(curTime, 0, wx.TOP)
         vbox.Add(toolbar, 0, wx.TOP)
         self.SetSizer(vbox)
         self.SetSize((400, 400))
         self.SetTitle('CueMIDI')
         self.Show(True)
+
+    def OnClose(self, e):
+        print("OnQuit")
+        if self.worker:
+            self.worker.abort()
+        self.Destroy()
 
     def OnQuit(self, e):
         self.Close()
@@ -74,6 +95,8 @@ if __name__ == '__main__':
     CueApp(None)
     app.MainLoop()
 
+
+sys.exit(0)
 ################
 
 fs = fluidsynth.Synth()
