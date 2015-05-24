@@ -8,13 +8,68 @@ import threading
 
 import wx
 
-EVT_TICK = wx.NewId()
+class Player(threading.Thread):
+    '''Class for playing MIDI files'''
+    def __init__(self):
+        '''Setup player (no file loading)'''
+        self.fs = fluidsynth.Synth()
+        self.pa = pyaudio.PyAudio()
+        self.strm = self.pa.open(
+            format = pyaudio.paInt16,
+            channels = 2, 
+            rate = 44100, 
+            output = True)
+        self.sfid = self.fs.sfload("gm32MB.sf2")
+        self.time = 0
 
-class ResultEvent(wx.PyEvent):
-    def __init__(self, data):
-        wx.PyEvent.__init__(self)
-        self.SetEventType(EVT_TICK)
-        self.data = data
+    def load(self, filename):
+        '''Load MIDI file'''
+        pattern = midi.read_midifile(filename)        
+        self.resolution = pattern.resolution
+        pattern.make_ticks_abs()
+        events = []
+        for track in pattern:
+            for event in track:
+                events.append(event)
+        events.sort()
+        self.events = events
+        self.remainingEvents = events[:]
+        self.tempo = 120.0
+        self.time = 0
+
+    def do_event(self, evt):
+        if type(evt) == midi.events.NoteOnEvent:
+            self.fs.noteon(evt.channel, evt.data[0], evt.data[1])
+        if type(evt) == midi.events.NoteOffEvent:
+            self.fs.noteoff(evt.channel, evt.data[0])
+        if type(evt) == midi.events.ProgramChangeEvent:
+            self.fs.program_select(evt.channel, self.sfid, 0, evt.data[0])
+        if type(evt) == midi.events.ControlChangeEvent:
+            self.fs.cc(evt.channel, evt.data[0], evt.data[1])
+        if type(evt) == midi.events.SetTempoEvent:
+            self.tempo = evt.get_bpm()
+
+    def tick(self):
+        event = self.remainingEvents.pop(0)
+        delta = event.tick - self.time
+        if delta > 0:
+            self.time = event.tick
+            s = fs.get_samples(int(44100 * delta / self.resolution * 120 / 2 / self.tempo))
+            samps = fluidsynth.raw_audio_string(s)
+            self.strm.write(samps)
+        self.do_event(event)
+    
+    def close(self):
+        fs.delete()
+
+    def main(self):
+        while len(self.remainingEvents) > 0:
+            self.tick()
+        self.close()
+
+
+
+EVT_TICK = wx.NewId()
 
 class Worker(threading.Thread):
     '''Worker thread class'''
@@ -28,6 +83,8 @@ class Worker(threading.Thread):
 
     def run(self):
         '''Run worker thread'''
+        self.player = Player()
+        self.player.load('test.midi')
         while True:
             time.sleep(1)
             self.i += 1
@@ -109,60 +166,3 @@ if __name__ == '__main__':
 
 
 sys.exit(0)
-################
-
-fs = fluidsynth.Synth()
-
-pa = pyaudio.PyAudio()
-strm = pa.open(
-    format = pyaudio.paInt16,
-    channels = 2, 
-    rate = 44100, 
-    output = True)
-s = []
-
-sfid = fs.sfload("gm32MB.sf2")
-fs.program_select(0, sfid, 0, 68)
-
-pattern = midi.read_midifile(sys.argv[1])
-
-resolution = pattern.resolution
-
-pattern.make_ticks_abs()
-
-events = []
-for track in pattern:
-    for event in track:
-        events.append(event)
-events.sort()
-
-t = 0
-
-tempo = 120
-
-def do_event(evt):
-    print(evt)
-    if type(evt) == midi.events.NoteOnEvent:
-        fs.noteon(evt.channel, evt.data[0], evt.data[1])
-    if type(evt) == midi.events.NoteOffEvent:
-        fs.noteoff(evt.channel, evt.data[0])
-    if type(evt) == midi.events.ProgramChangeEvent:
-        fs.program_select(evt.channel, sfid, 0, evt.data[0])
-    if type(evt) == midi.events.ControlChangeEvent:
-        fs.cc(evt.channel, evt.data[0], evt.data[1])
-    if type(evt) == midi.events.SetTempoEvent:
-        global tempo
-        tempo = evt.get_bpm()
-        print("TEMPO", tempo)
-
-while len(events) > 0:
-    event = events.pop(0)
-    delta = event.tick - t
-    if delta > 0:
-        t = event.tick
-        s = fs.get_samples(int(44100 * delta / resolution * 120 / 2 / tempo))
-        samps = fluidsynth.raw_audio_string(s)
-        strm.write(samps)
-    do_event(event)
-
-fs.delete()
