@@ -1,11 +1,10 @@
 import time
+import sys
+import threading
 import numpy
 import pyaudio
 import fluidsynth
 import midi
-import sys
-import threading
-
 import wx
 
 EVT_TICK = wx.NewId()
@@ -30,7 +29,11 @@ class Player(threading.Thread):
         self.time = 0
         self.timeSig = [4, 4]
         self.metronome = 32
+        self.tempo = 120.0
+        self.resolution = 220
         self.qpm = 3 # quarter notes per measure (midi is 1/4 based)
+        self.events = []
+        self.remainingEvents = []
         self.start()
 
     def abort(self):
@@ -50,7 +53,7 @@ class Player(threading.Thread):
         self.remainingEvents = events[:]
         self.tempo = 120.0
         self.time = 0
-        self._playing = True
+        self._playing = False
 
     def do_event(self, evt):
         if type(evt) == midi.events.TimeSignatureEvent:
@@ -79,13 +82,24 @@ class Player(threading.Thread):
         ]
         wx.PostEvent(self._notify_window, evt)
 
+    def getTimeRange(self):
+        return [self.events[0].tick, self.events[-1].tick]
+
+    def getTime(self):
+        return self.time
+
+    def softReset(self):
+        for chan in range(16):
+            for note in range(128):
+                self.fs.noteoff(chan, note)
+
     def gotoTime(self, time):
         self.time = time
         if self.time < 0:
             self.time = 0
         self.remainingEvents = [e for e in self.events if e.tick >= self.time]
         self.sendUpdate()
-        self.fs.system_reset()
+        self.softReset() # more reliably than fs.system_reset()
 
     def skip(self, dtime):
         self.gotoTime(self.time + dtime * self.metronome)
@@ -120,7 +134,6 @@ class Player(threading.Thread):
         self.fs.delete()
 
     def run(self):
-        self.load('test.midi')
         self.main()
         self.close()
 
@@ -131,14 +144,18 @@ class CueApp(wx.Frame):
         '''Setup app'''
         super(CueApp, self).__init__(*args, **kwargs)
         self.player = Player(self)
+        self.markTime = 0
         self.InitUI()
+        if len(sys.argv) > 1:
+            self.player.load(sys.argv[1])
 
     def InitUI(self):
         '''Setup UI for application'''
         menubar = wx.MenuBar()
 
         fileMenu = wx.Menu()
-        fileMenu.Append(wx.ID_OPEN, '&Open')
+        openItem = fileMenu.Append(wx.ID_OPEN, '&Open')
+        self.Bind(wx.EVT_MENU, self.OnOpen, openItem)
         #~ fileMenu.Append(wx.ID_ANY, '&Set SoundFont')
         quitItem = fileMenu.Append(wx.ID_EXIT, '&Quit', 'Quit application')
 
@@ -152,17 +169,14 @@ class CueApp(wx.Frame):
         vbox = wx.BoxSizer(wx.VERTICAL)
 
         curTime = wx.StaticText(self)
-        curTime.SetLabel("Hello")
+        curTime.SetLabel("")
         self.curTime = curTime
 
         toolbar = wx.ToolBar(self)
-        toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/play64.png'))
         pauseTool = toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/pause64.png'))
         self.Bind(wx.EVT_TOOL, self.OnPause, pauseTool)
         rrTool = toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/rr64.png'))
-        self.Bind(wx.EVT_TOOL, self.MetaSkip(-100), rrTool)
-        ffTool = toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/ff64.png'))
-        self.Bind(wx.EVT_TOOL, self.MetaSkip(100), ffTool)
+        self.Bind(wx.EVT_TOOL, self.GotoMark, rrTool)
         markTool = toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/mark64.png'))
         self.Bind(wx.EVT_TOOL, self.Mark, markTool)
         toolbar.Realize()
@@ -180,6 +194,13 @@ class CueApp(wx.Frame):
             self.player.abort()
         self.Destroy()
 
+    def OnOpen(self, e):
+        dialog = wx.FileDialog(self, 'Choose a file to open')
+        if dialog.ShowModal() == wx.ID_OK:
+            filename = dialog.GetPath()
+            self.player.load(filename)
+            self.markTime = 0
+
     def OnQuit(self, e):
         '''Quit menu item action'''
         self.Close()
@@ -192,8 +213,12 @@ class CueApp(wx.Frame):
             self.player.skip(v)
         return f
 
+    def GotoMark(self, e):
+        if self.markTime is not None:
+            self.player.gotoTime(self.markTime)
+
     def Mark(self, e):
-        return
+        self.markTime = self.player.getTime()
 
     def Tick(self, e):
         '''Update with info from worker thread'''
