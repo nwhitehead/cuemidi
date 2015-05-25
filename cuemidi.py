@@ -33,7 +33,7 @@ class Player(threading.Thread):
         self.resolution = 220
         self.qpm = 3 # quarter notes per measure (midi is 1/4 based)
         self.events = []
-        self.remainingEvents = []
+        self.eventnum = 0
         self.start()
 
     def abort(self):
@@ -50,10 +50,11 @@ class Player(threading.Thread):
                 events.append(event)
         events.sort()
         self.events = events
-        self.remainingEvents = events[:]
+        self.eventnum = 0
         self.tempo = 120.0
         self.time = 0
         self._playing = False
+        self.softReset()
 
     def do_event(self, evt):
         if type(evt) == midi.events.TimeSignatureEvent:
@@ -100,8 +101,9 @@ class Player(threading.Thread):
             self.time = 0
         # Pick out events to do
         # Always include start events (setup)
-        self.remainingEvents = [e for e in self.events
-            if e.tick >= self.time or e.tick < 2]
+        self.eventnum = 0
+        while self.events[self.eventnum].tick < self.time:
+            self.eventnum += 1
         self.sendUpdate()
         self.softReset() # more reliably than fs.system_reset()
 
@@ -110,8 +112,9 @@ class Player(threading.Thread):
 
     def main(self):
         while True:
-            if len(self.remainingEvents) > 0 and self._playing:
-                event = self.remainingEvents.pop(0)
+            if self.eventnum < len(self.events) and self._playing:
+                event = self.events[self.eventnum]
+                self.eventnum += 1
                 delta = event.tick - self.time
                 while delta > 0:
                     bdelta = delta
@@ -128,6 +131,8 @@ class Player(threading.Thread):
                         break
                 self.do_event(event)
                 self.sendUpdate()
+            else:
+                time.sleep(0.01)
             if self._abort:
                 return
     
