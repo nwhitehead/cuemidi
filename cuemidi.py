@@ -76,6 +76,7 @@ class Player(threading.Thread):
         evt = wx.PyEvent()
         evt.SetEventType(EVT_TICK)
         evt.data = [
+            self.time,
             1 + self.time / self.resolution / self.qpm,
             1 + int(self.time * self.timeSig[1] / self.resolution / 4) % self.timeSig[0],
             self.time / self.metronome,
@@ -97,7 +98,10 @@ class Player(threading.Thread):
         self.time = time
         if self.time < 0:
             self.time = 0
-        self.remainingEvents = [e for e in self.events if e.tick >= self.time]
+        # Pick out events to do
+        # Always include start events (setup)
+        self.remainingEvents = [e for e in self.events
+            if e.tick >= self.time or e.tick < 2]
         self.sendUpdate()
         self.softReset() # more reliably than fs.system_reset()
 
@@ -147,7 +151,7 @@ class CueApp(wx.Frame):
         self.markTime = 0
         self.InitUI()
         if len(sys.argv) > 1:
-            self.player.load(sys.argv[1])
+            self.Open(sys.argv[1])
 
     def InitUI(self):
         '''Setup UI for application'''
@@ -181,8 +185,13 @@ class CueApp(wx.Frame):
         self.Bind(wx.EVT_TOOL, self.Mark, markTool)
         toolbar.Realize()
 
-        vbox.Add(curTime, 0, wx.TOP)
+        slider = wx.Slider(self, value=0, minValue=0, maxValue=1000, size=(390, 50))
+        self.slider = slider
+        self.Bind(wx.EVT_SCROLL_CHANGED, self.Slider, slider)
+
         vbox.Add(toolbar, 0, wx.TOP)
+        vbox.Add(slider, 0, wx.TOP)
+        vbox.Add(curTime, 0, wx.TOP)
         self.SetSizer(vbox)
         self.SetSize((400, 400))
         self.SetTitle('CueMIDI')
@@ -194,12 +203,15 @@ class CueApp(wx.Frame):
             self.player.abort()
         self.Destroy()
 
+    def Open(self, filename):
+        self.player.load(filename)
+        self.markTime = 0
+
     def OnOpen(self, e):
         dialog = wx.FileDialog(self, 'Choose a file to open')
         if dialog.ShowModal() == wx.ID_OK:
             filename = dialog.GetPath()
-            self.player.load(filename)
-            self.markTime = 0
+            self.Open(filename)
 
     def OnQuit(self, e):
         '''Quit menu item action'''
@@ -222,7 +234,16 @@ class CueApp(wx.Frame):
 
     def Tick(self, e):
         '''Update with info from worker thread'''
-        self.curTime.SetLabel('Time: {} {} {}'.format(e.data[0], e.data[1], e.data[2]))
+        r = self.player.getTimeRange()
+        self.curTime.SetLabel('Time: {} {} {}'.format(e.data[1], e.data[2], e.data[3]))
+        v = int(1000 * e.data[0] / r[1])
+        self.slider.SetValue(v)
+
+    def Slider(self, e):
+        r = self.player.getTimeRange()
+        o = e.GetEventObject()
+        v = int(o.GetValue() / 1000.0 * r[1])
+        self.player.gotoTime(v)
 
 if __name__ == '__main__':
     app = wx.App()
