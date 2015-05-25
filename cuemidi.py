@@ -55,6 +55,10 @@ class Player(threading.Thread):
         self.time = 0
         self._playing = False
         self.softReset()
+        while self.eventnum < len(self.events) and self.events[self.eventnum].tick < 2:
+                event = self.events[self.eventnum]
+                self.eventnum += 1
+                self.do_event(event)
 
     def do_event(self, evt):
         if type(evt) == midi.events.TimeSignatureEvent:
@@ -146,6 +150,18 @@ class Player(threading.Thread):
         self.main()
         self.close()
 
+class Cues(wx.Panel):
+    def __init__(self, *args, **kwargs):
+        super(Cues, self).__init__(*args, **kwargs)
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.Show(True)
+
+    def OnPaint(self, e):
+        print("PaintCues")
+        dc = wx.PaintDC(self)
+        dc.SetPen(wx.Pen('RED'))
+        dc.DrawRectangle(0, 0, 390, 50)
+
 class CueApp(wx.Frame):
     '''Main CueMIDI application class'''
 
@@ -194,9 +210,13 @@ class CueApp(wx.Frame):
         self.slider = slider
         self.Bind(wx.EVT_SCROLL_CHANGED, self.Slider, slider)
 
+        canvas = Cues(self, size=(390, 50))
+        self.canvas = canvas
+
         vbox.Add(toolbar, 0, wx.TOP)
         vbox.Add(slider, 0, wx.TOP)
         vbox.Add(curTime, 0, wx.TOP)
+        vbox.Add(canvas, 0, wx.TOP)
         self.SetSizer(vbox)
         self.SetSize((400, 400))
         self.SetTitle('CueMIDI')
