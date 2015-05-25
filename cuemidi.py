@@ -9,6 +9,8 @@ import wx
 
 EVT_TICK = wx.NewId()
 MAXDELTA = 5
+GRACE = 50
+TRASH_DELTA = 1000
 
 class Player(threading.Thread):
     '''Class for playing MIDI files'''
@@ -89,7 +91,10 @@ class Player(threading.Thread):
         wx.PostEvent(self._notify_window, evt)
 
     def getTimeRange(self):
-        return [self.events[0].tick, self.events[-1].tick]
+        if len(self.events) > 0:
+            return [self.events[0].tick, self.events[-1].tick]
+        else:
+            return [0, 1]
 
     def getTime(self):
         return self.time
@@ -155,12 +160,21 @@ class Cues(wx.Panel):
         super(Cues, self).__init__(*args, **kwargs)
         self.Bind(wx.EVT_PAINT, self.OnPaint)
         self.Show(True)
+        self.cues = []
+
+    def SetCues(self, cues):
+        self.cues = cues
+        self.Refresh()
+        self.Update()
 
     def OnPaint(self, e):
-        print("PaintCues")
         dc = wx.PaintDC(self)
-        dc.SetPen(wx.Pen('RED'))
+        dc.SetPen(wx.Pen('WHITE'))
         dc.DrawRectangle(0, 0, 390, 50)
+        dc.SetPen(wx.Pen('RED'))
+        for cue in self.cues:
+            x = cue * 390 / 1000
+            dc.DrawRectangle(x, 0, 2, 50)
 
 class CueApp(wx.Frame):
     '''Main CueMIDI application class'''
@@ -169,7 +183,7 @@ class CueApp(wx.Frame):
         '''Setup app'''
         super(CueApp, self).__init__(*args, **kwargs)
         self.player = Player(self)
-        self.markTime = 0
+        self.markTimes = [0]
         self.InitUI()
         if len(sys.argv) > 1:
             self.Open(sys.argv[1])
@@ -201,9 +215,13 @@ class CueApp(wx.Frame):
         pauseTool = toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/pause64.png'))
         self.Bind(wx.EVT_TOOL, self.OnPause, pauseTool)
         rrTool = toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/rr64.png'))
-        self.Bind(wx.EVT_TOOL, self.GotoMark, rrTool)
+        self.Bind(wx.EVT_TOOL, self.MetaSkip(-1), rrTool)
+        ffTool = toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/ff64.png'))
+        self.Bind(wx.EVT_TOOL, self.MetaSkip(1), ffTool)
         markTool = toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/mark64.png'))
         self.Bind(wx.EVT_TOOL, self.Mark, markTool)
+        trashTool = toolbar.AddLabelTool(wx.ID_ANY, '', wx.Bitmap('gfx/trash64.png'))
+        self.Bind(wx.EVT_TOOL, self.Trash, trashTool)
         toolbar.Realize()
 
         slider = wx.Slider(self, value=0, minValue=0, maxValue=1000, size=(390, 50))
@@ -212,6 +230,7 @@ class CueApp(wx.Frame):
 
         canvas = Cues(self, size=(390, 50))
         self.canvas = canvas
+        self.SetCues()
 
         vbox.Add(toolbar, 0, wx.TOP)
         vbox.Add(slider, 0, wx.TOP)
@@ -230,7 +249,7 @@ class CueApp(wx.Frame):
 
     def Open(self, filename):
         self.player.load(filename)
-        self.markTime = 0
+        self.markTimes = [0]
 
     def OnOpen(self, e):
         dialog = wx.FileDialog(self, 'Choose a file to open')
@@ -245,17 +264,49 @@ class CueApp(wx.Frame):
     def OnPause(self, e):
         self.player.pause()
 
+    def Trash(self, e):
+        if len(self.markTimes) == 0:
+            return
+        t = self.player.getTime()
+        def close(x):
+            return abs(x - t)
+        closest = sorted(self.markTimes, key=close)[0]
+        if abs(closest - t) < TRASH_DELTA:
+            self.markTimes.remove(closest)
+        self.SetCues()
+
     def MetaSkip(self, v):
         def f(_):
-            self.player.skip(v)
+            t = self.player.getTime()
+            m = 0
+            if self.player._playing:
+                t -= GRACE
+            while m < len(self.markTimes) and self.markTimes[m] < t:
+                m += 1
+            if v == -1:
+                self.player.gotoTime(self.markTimes[m - 1])
+            if v == 1:
+                if m < len(self.markTimes) and t == self.markTimes[m]:
+                    m += 1
+                if m >= len(self.markTimes):
+                    m = 0
+                self.player.gotoTime(self.markTimes[m])
         return f
 
+    def SetCues(self):
+        r = self.player.getTimeRange()
+        self.canvas.SetCues([t * 1000 / r[1] for t in self.markTimes])
+    
     def GotoMark(self, e):
         if self.markTime is not None:
             self.player.gotoTime(self.markTime)
 
     def Mark(self, e):
-        self.markTime = self.player.getTime()
+        self.markTimes.append(self.player.getTime())
+        # remove dups
+        self.markTimes = list(set(self.markTimes))
+        self.markTimes.sort()
+        self.SetCues()
 
     def Tick(self, e):
         '''Update with info from worker thread'''
