@@ -9,7 +9,7 @@ import wx
 
 EVT_TICK = wx.NewId()
 MAXDELTA = 5
-GRACE = 50
+GRACE = 100
 TRASH_DELTA = 1000
 
 class Player(threading.Thread):
@@ -51,6 +51,12 @@ class Player(threading.Thread):
             for event in track:
                 events.append(event)
         events.sort()
+        cues = []
+        for e in events:
+            if type(e) == midi.events.TextMetaEvent:
+                if e.data == [99, 117, 101]:
+                    cues.append(e.tick)
+        self.cues = cues
         self.events = events
         self.eventnum = 0
         self.tempo = 120.0
@@ -249,7 +255,12 @@ class CueApp(wx.Frame):
 
     def Open(self, filename):
         self.player.load(filename)
-        self.markTimes = [0]
+        if len(self.player.cues) > 0:
+            self.markTimes = list(set(self.player.cues))
+            self.markTimes.sort()
+        else:
+            self.markTimes = [0]
+        self.SetCues()
 
     def OnOpen(self, e):
         dialog = wx.FileDialog(self, 'Choose a file to open')
@@ -279,7 +290,7 @@ class CueApp(wx.Frame):
         def f(_):
             t = self.player.getTime()
             m = 0
-            if self.player._playing:
+            if self.player._playing and v < 0:
                 t -= GRACE
             while m < len(self.markTimes) and self.markTimes[m] < t:
                 m += 1
