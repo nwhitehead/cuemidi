@@ -1,6 +1,7 @@
 import time
 import sys
 import threading
+import argparse
 import numpy
 import pyaudio
 import fluidsynth
@@ -11,6 +12,7 @@ EVT_TICK = wx.NewId()
 MAXDELTA = 5
 GRACE = 100
 TRASH_DELTA = 1000
+FREQ = 44100
 
 class Player(threading.Thread):
     '''Class for playing MIDI files'''
@@ -20,12 +22,12 @@ class Player(threading.Thread):
         self._notify_window = notify_window
         self._abort = False
         self._playing = False
-        self.fs = fluidsynth.Synth()
+        self.fs = fluidsynth.Synth(samplerate=FREQ)
         self.pa = pyaudio.PyAudio()
         self.strm = self.pa.open(
             format = pyaudio.paInt16,
             channels = 2, 
-            rate = 44100, 
+            rate = FREQ,
             output = True)
         self.sfid = self.fs.sfload("gm32MB.sf2")
         self.time = 0
@@ -136,7 +138,7 @@ class Player(threading.Thread):
                     if delta > MAXDELTA:
                         bdelta = MAXDELTA
                     self.time += bdelta
-                    n = int(44100 * bdelta / self.resolution * 60 / self.tempo)
+                    n = int(FREQ * bdelta / self.resolution * 60 / self.tempo)
                     s = self.fs.get_samples(n)
                     samps = fluidsynth.raw_audio_string(s)
                     self.strm.write(samps)
@@ -188,11 +190,18 @@ class CueApp(wx.Frame):
     def __init__(self, *args, **kwargs):
         '''Setup app'''
         super(CueApp, self).__init__(*args, **kwargs)
+        parser = argparse.ArgumentParser(description='Play MIDI file with cues.')
+        parser.add_argument('filename', nargs='?')
+        parser.add_argument('--samplerate', default=44100, type=int,
+            help='samplerate to use (44100, 22050)')
+        cmdargs = parser.parse_args()
+        global FREQ
+        FREQ = cmdargs.samplerate
         self.player = Player(self)
         self.markTimes = [0]
         self.InitUI()
-        if len(sys.argv) > 1:
-            self.Open(sys.argv[1])
+        if cmdargs.filename:
+            self.Open(cmdargs.filename)
 
     def InitUI(self):
         '''Setup UI for application'''
