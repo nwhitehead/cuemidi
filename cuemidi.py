@@ -56,7 +56,7 @@ class Player(threading.Thread):
         cues = []
         for e in events:
             if type(e) == midi.events.TextMetaEvent:
-                if e.data == [99, 117, 101]:
+                if e.text.startswith('cue'):
                     cues.append(e.tick)
         self.cues = cues
         self.events = events
